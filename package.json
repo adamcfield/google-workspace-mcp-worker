@@ -40,8 +40,8 @@
   },
   "devDependencies": {
     "@anthropic-ai/tokenizer": "^0.0.4",
-    "@cloudflare/workers-types": "^5.20260917.1",
-    "@types/node": "^22.20.3",
+    "@cloudflare/workers-types": "^5.20260924.1",
+    "@types/node": "^26.6.2",
     "esbuild": "^0.28.1",
     "typescript": "^7.0.2",
     "vitest": "^5.0.1",
