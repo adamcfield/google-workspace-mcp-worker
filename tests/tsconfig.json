@@ -1,0 +1,8 @@
+{
+  // Tests run under Node (vitest) and may use node: built-ins; src/ keeps the Workers-only types.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "types": ["@cloudflare/workers-types", "node"]
+  },
+  "include": ["./**/*.ts", "../src/**/*.ts"]
+}

@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - name: Dependency audit (high+)
+        run: npm audit --omit=dev --audit-level=high
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Test
+        run: npm test
+      - name: Generated files up to date (README tables, docs/measurements/current.md)
+        run: npm run gen:check
+      - name: Tool-selection benchmark (fails on any missed mutation tool or forbidden selection)
+        run: npm run jev:bench
+      - name: Build bearer worker (dry-run bundle)
+        run: npx wrangler deploy --dry-run --outdir dist/bearer
+        env:
+          CI: '1'
+          WRANGLER_SEND_METRICS: 'false'
+      - name: Build OAuth worker (dry-run bundle)
+        run: npx wrangler deploy -c wrangler.oauth.jsonc --dry-run --outdir dist/oauth
+        env:
+          CI: '1'
+          WRANGLER_SEND_METRICS: 'false'
+
+  secrets-scan:
+    # Blocks a push that carries anything that looks like a credential (Google client secrets,
+    # refresh tokens, Cloudflare tokens, private keys). Runs on the full history of the push.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read # the action lists the PR's commits on pull_request events
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,14 @@
+[
+  {
+    "label": "gmail_search_messages definition",
+    "model": "claude-sonnet-5",
+    "text": "{\"name\":\"gmail_search_messages\",\"description\":\"Search Gmail messages with a Gmail query.\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"query\":{\"type\":\"string\"}}}}",
+    "referenceTokens": 0
+  },
+  {
+    "label": "Hebrew prose",
+    "model": "claude-sonnet-5",
+    "text": "מצא את השרשור האחרון עם הלקוח וסכם את ההחלטה בשתי שורות.",
+    "referenceTokens": 0
+  }
+]

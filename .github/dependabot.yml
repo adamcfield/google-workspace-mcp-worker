@@ -1,0 +1,18 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      cloudflare:
+        patterns: ["wrangler", "@cloudflare/*", "agents"]
+      mcp:
+        patterns: ["@modelcontextprotocol/*"]
+      dev:
+        dependency-type: development
+    open-pull-requests-limit: 5
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

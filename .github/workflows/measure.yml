@@ -1,0 +1,53 @@
+name: Measure
+
+# Counts what a client pays for tools/list: bytes and local-tokenizer tokens per surface,
+# for any ref, on a clean runner. No network beyond npm ci, no API key (
+# token counting is local only). Trigger manually: Actions → Measure → Run workflow.
+# Nothing is committed; the report lands in the job summary and as an artifact
+# (report.md, report.json, tools-list.*.json). To keep a baseline, run
+# `node scripts/measure-tools.mjs --out docs/measurements/<version>-<commit>` locally and
+# pin it in tests/measure.test.ts (see docs/measurements/README.md).
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: Output directory name, [A-Za-z0-9._-] only (default <version>-<short sha>)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - name: Resolve output label
+        id: label
+        env:
+          LABEL_INPUT: ${{ inputs.label }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          SHA=$(git rev-parse --short HEAD)
+          LABEL="${LABEL_INPUT:-${VERSION}-${SHA}}"
+          [[ "$LABEL" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "label must match [A-Za-z0-9._-]+ (got: $LABEL)"; exit 1; }
+          echo "label=$LABEL" >> "$GITHUB_OUTPUT"
+      - name: Measure bytes + local tokens
+        env:
+          LABEL: ${{ steps.label.outputs.label }}
+        run: node scripts/measure-tools.mjs --out "measurements/$LABEL"
+      - name: Summary
+        env:
+          LABEL: ${{ steps.label.outputs.label }}
+        run: cat "measurements/$LABEL/report.md" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: measurements-${{ steps.label.outputs.label }}
+          path: measurements/
+          retention-days: 90

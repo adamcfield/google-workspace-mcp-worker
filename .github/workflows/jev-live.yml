@@ -1,0 +1,75 @@
+name: JEV live benchmark
+
+# Runs the 72-case tool-selection benchmark with JEV answering the binary questions, and uploads
+# the report as an artifact. Manual only: it spends API credit and it is a measurement, not a gate.
+# The gate that runs on every push is the deterministic `npm run jev:bench` step in ci.yml, which
+# reads no key and calls nothing.
+#
+# Repo SECRET (Settings -> Secrets and variables -> Actions -> Secrets):
+#   TYPESAFE_API_KEY   a TypeSafe API key. Mapped into the step's environment and nowhere else.
+#
+# The key is never echoed, written to the report, or passed on the command line. The runner script
+# pins the SDK's log level to `off`, because at `debug` the SDK logs request bodies and a body
+# carries the benchmark request text. If the secret is missing the run fails with a clear message
+# rather than quietly measuring the deterministic selector and labelling the numbers as JEV's.
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "Model override (default: the SDK's jev-latest)"
+        required: false
+        type: string
+      threshold:
+        description: 'Probability at or above which a candidate counts as required (default: 0.5)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+
+      - name: Refuse to run without the key
+        env:
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+        # A skipped or silently-degraded step reads as a pass, so this fails loudly instead. It
+        # tests only whether the value is empty and never prints it.
+        run: |
+          if [ -z "$TYPESAFE_API_KEY" ]; then
+            echo "::error::The TYPESAFE_API_KEY repository secret is empty or not set."
+            exit 1
+          fi
+          echo "TYPESAFE_API_KEY is present."
+
+      - name: Benchmark with JEV
+        env:
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+          # Through the environment rather than interpolated into the script, so a dispatch input
+          # cannot inject shell.
+          MODEL: ${{ inputs.model }}
+          THRESHOLD: ${{ inputs.threshold }}
+        run: |
+          args=(--live --out bench/jev/results/live --label "jev live (run ${GITHUB_RUN_ID}, ${GITHUB_SHA})")
+          # `if` rather than `[ -n "$X" ] && args+=(...)`: the runner uses `bash -e`, where that
+          # one-liner exits the step as soon as the input is empty, which is the normal case.
+          if [ -n "$MODEL" ]; then args+=(--model "$MODEL"); fi
+          if [ -n "$THRESHOLD" ]; then args+=(--threshold "$THRESHOLD"); fi
+          node scripts/jev-bench.mjs "${args[@]}"
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jev-live-report
+          path: bench/jev/results/live/
+          if-no-files-found: error

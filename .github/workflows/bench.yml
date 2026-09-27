@@ -1,0 +1,64 @@
+name: Bench
+
+# Orientation benchmark — the CI-safe part only (bench/README.md). Runs the benchmark unit tests
+# (tasks.json integrity = gate G8, policy, gates, grading), prints the fixture plan without touching
+# a Google account, and scores whatever numeric exports are committed under bench/results/.
+# No secrets, no model, no Google network: the fixture builder refuses to run under CI, and no
+# harness driver runs a model at all — this repository makes no model API calls and holds no
+# model API key or SDK anywhere.
+# Trigger manually: Actions → Bench → Run workflow. The `bench` environment carries the required
+# reviewers, so a run is an explicit, approved act.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  score:
+    runs-on: ubuntu-latest
+    environment: bench
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - name: Benchmark tests (tasks.json references, policy, gates, grading)
+        run: npx vitest run tests/bench.test.ts
+      # `shell: bash` = `bash -eo pipefail`: a failing --plan is not masked by the successful tee.
+      - name: Fixture plan (no network)
+        shell: bash
+        run: node bench/fixtures.mjs --plan | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Find committed numeric exports
+        id: results
+        run: |
+          if compgen -G "bench/results/*.csv" > /dev/null; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "_No committed run rows under bench/results/ — nothing to score._" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      # Both score.mjs invocations run even when the first one fails (a gate FAIL exits 1, a stale
+      # CSV exits 2, a malformed one throws and exits 1) so the summary and the export are always
+      # produced. `shell: bash` runs the block under `bash -eo pipefail`, so `$?` after the piped
+      # call is score.mjs's status (not tee's); the step then exits with the first non-zero status
+      # so the failure surfaces in the workflow result.
+      - name: Score committed results
+        if: steps.results.outputs.present == 'true'
+        shell: bash
+        run: |
+          mkdir -p out
+          md=0; js=0
+          node bench/score.mjs bench/results/*.csv --allow-stale --export out/bench-results-numeric.csv | tee -a "$GITHUB_STEP_SUMMARY" || md=$?
+          node bench/score.mjs bench/results/*.csv --allow-stale --json > out/summary.json || js=$?
+          [ "$md" -eq 0 ] || exit "$md"
+          exit "$js"
+      - name: Upload numeric export
+        if: always() && steps.results.outputs.present == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results-numeric
+          path: out/bench-results-numeric.csv
+          retention-days: 90

@@ -1,0 +1,124 @@
+name: Staging
+
+# Deploys the A/B/C staging copies of the claude.ai connector:
+# google-workspace-mcp-oauth-a / -b / -c. Same code and vars as production, each with its
+# own OAUTH_KV namespace (created through the Cloudflare API when missing — never the
+# production id), its own Durable Object namespace (a worker name is a DO namespace) and
+# its own rate-limit namespace id. Manual only. Needs the same two repo secrets as Deploy
+# (CLOUDFLARE_API_TOKEN with Workers + KV edit, CLOUDFLARE_ACCOUNT_ID). Google client
+# credentials: if the repo secrets GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET exist they are
+# set on every staging worker after the deploy; otherwise set them once per worker with
+# `npx wrangler secret put <NAME> --name google-workspace-mcp-oauth-<x>` (they persist).
+#
+# Repo VARIABLES this needs: ALLOWED_EMAILS (the real allow-list the staging copies start from —
+# the committed config is a public template holding a placeholder, so there is nothing to inherit)
+# and WORKERS_SUBDOMAIN (the `<sub>` in https://<worker>.<sub>.workers.dev, so no live URL is
+# committed here). The job fails rather than deploying a staging worker nobody can sign in to.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref to deploy (empty = the ref this workflow runs from)'
+        required: false
+        default: ''
+      workers:
+        description: 'Comma-separated staging suffixes'
+        required: false
+        default: 'a,b,c'
+      extra_allowed_emails:
+        description: 'Extra allow-list entries for the STAGING copies only, appended to the repo variable ALLOWED_EMAILS. Production is never affected. Empty = the base list alone.'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      WRANGLER_SEND_METRICS: 'false'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Require the allow-list this deployment actually uses
+        env:
+          ALLOWED_EMAILS: ${{ vars.ALLOWED_EMAILS }}
+        run: |
+          if [ -z "${ALLOWED_EMAILS// /}" ]; then
+            echo "::error::Set the repo variable ALLOWED_EMAILS (Settings → Secrets and variables → Actions → Variables) to this deployment's real allow-list. The committed config is a public template holding you@example.com, so a staging worker generated without this would refuse every sign-in."
+            exit 1
+          fi
+      - name: Keep the generator, then check out the requested ref
+        run: |
+          cp scripts/staging-config.mjs "$RUNNER_TEMP/staging-config.mjs"
+          if [ -n "${{ inputs.ref }}" ]; then
+            git fetch --no-tags origin "${{ inputs.ref }}" || true
+            git checkout --detach "${{ inputs.ref }}"
+          fi
+          echo "deploying $(git rev-parse HEAD)"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - name: Deploy each staging worker
+        env:
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/storage/kv/namespaces"
+          auth="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+          IFS=',' read -ra SUFFIXES <<< "${{ inputs.workers }}"
+          for raw in "${SUFFIXES[@]}"; do
+            x="$(echo "$raw" | tr -d '[:space:]')"
+            [ -n "$x" ] || continue
+            name="google-workspace-mcp-oauth-$x"
+            title="$name-OAUTH_KV"
+            kv="$(curl -sS -H "$auth" "$api?per_page=100" | jq -r --arg t "$title" '.result[] | select(.title==$t) | .id' | head -n1)"
+            if [ -z "$kv" ]; then
+              echo "creating KV namespace $title"
+              kv="$(curl -sS -X POST -H "$auth" -H 'Content-Type: application/json' -d "{\"title\":\"$title\"}" "$api" | jq -r '.result.id')"
+            fi
+            [ "${#kv}" -eq 32 ] || { echo "no KV namespace id for $title"; exit 1; }
+            # The config must live in the checkout: wrangler resolves `main` (and every other
+            # path in it) relative to the config file, not to the working directory.
+            cfg="$(node "$RUNNER_TEMP/staging-config.mjs" "$x" "$kv" --source "$GITHUB_WORKSPACE/wrangler.oauth.jsonc" --out "$GITHUB_WORKSPACE/wrangler.staging-$x.jsonc" --allow-base "${{ vars.ALLOWED_EMAILS }}" --allow-extra "${{ inputs.extra_allowed_emails }}" --refuse-kv-id "${{ vars.OAUTH_KV_ID }}")"
+            echo "$name allow-list: $(jq -r '.vars.ALLOWED_EMAILS | split(", ") | length' "$cfg") entries"
+            echo "deploying $name (KV $kv)"
+            npx wrangler deploy -c "$cfg"
+            if [ -n "$GOOGLE_CLIENT_ID" ] && [ -n "$GOOGLE_CLIENT_SECRET" ]; then
+              printf '%s' "$GOOGLE_CLIENT_ID" | npx wrangler secret put GOOGLE_CLIENT_ID -c "$cfg"
+              printf '%s' "$GOOGLE_CLIENT_SECRET" | npx wrangler secret put GOOGLE_CLIENT_SECRET -c "$cfg"
+            else
+              echo "::notice::GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET repo secrets not set — $name keeps whatever worker secrets it already has"
+            fi
+          done
+      - name: Health check against production
+        env:
+          WORKERS_SUBDOMAIN: ${{ vars.WORKERS_SUBDOMAIN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${WORKERS_SUBDOMAIN:-}" ]; then
+            echo "::error::Set the repo variable WORKERS_SUBDOMAIN (Settings → Secrets and variables → Actions → Variables) to your workers.dev subdomain."
+            exit 1
+          fi
+          prod="$(curl -sS "https://google-workspace-mcp-oauth.$WORKERS_SUBDOMAIN.workers.dev/health")"
+          pv="$(echo "$prod" | jq -r .version)"; pt="$(echo "$prod" | jq -r .tools)"
+          echo "production: version=$pv tools=$pt"
+          fail=0
+          IFS=',' read -ra SUFFIXES <<< "${{ inputs.workers }}"
+          for raw in "${SUFFIXES[@]}"; do
+            x="$(echo "$raw" | tr -d '[:space:]')"; [ -n "$x" ] || continue
+            url="https://google-workspace-mcp-oauth-$x.$WORKERS_SUBDOMAIN.workers.dev/health"
+            for i in 1 2 3 4 5 6; do code="$(curl -sS -o /tmp/h.json -w '%{http_code}' "$url" || echo 000)"; [ "$code" = "200" ] && break; sleep 10; done
+            body="$(cat /tmp/h.json)"
+            v="$(echo "$body" | jq -r .version)"; t="$(echo "$body" | jq -r .tools)"; c="$(echo "$body" | jq -r .configured)"; w="$(echo "$body" | jq -c '.warnings // []')"
+            echo "$url → $code version=$v tools=$t configured=$c warnings=$w"
+            [ "$code" = "200" ] && [ "$v" = "$pv" ] && [ "$t" = "$pt" ] || fail=1
+          done
+          exit $fail

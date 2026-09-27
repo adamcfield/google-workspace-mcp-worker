@@ -1,0 +1,61 @@
+{
+  // BEARER-TOKEN deployment (src/index.ts) — for Claude Code, scripts and any MCP
+  // client that can send `Authorization: Bearer <MCP_AUTH_TOKEN>`.
+  // For claude.ai custom connectors deploy the OAuth variant: wrangler.oauth.jsonc.
+  //
+  // One-time setup (scripts/setup.sh does all of it):
+  //   npx wrangler kv namespace create TOKEN_KV      -> paste the id below
+  //   npx wrangler secret put MCP_AUTH_TOKEN           (e.g. openssl rand -hex 32)
+  //   npx wrangler secret put GOOGLE_CLIENT_ID
+  //   npx wrangler secret put GOOGLE_CLIENT_SECRET
+  //   npx wrangler deploy
+  //   open https://google-workspace-mcp.<sub>.workers.dev/google/auth?key=<MCP_AUTH_TOKEN>
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "google-workspace-mcp",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [{ "name": "MCP_OBJECT", "class_name": "GoogleWorkspaceMCP" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["GoogleWorkspaceMCP"] }],
+  "kv_namespaces": [
+    // Encrypted owner grant (the Google refresh token from /google/auth) + encrypted
+    // access-token cache shared by all MCP sessions. Run
+    // `npx wrangler kv namespace create TOKEN_KV` and paste the id it prints.
+    // A KV namespace may be shared with other Workers: every key this code writes is
+    // prefixed `gws:`, so it cannot collide with a sibling's.
+    { "binding": "TOKEN_KV", "id": "REPLACE_WITH_YOUR_TOKEN_KV_ID" }
+  ],
+  "vars": {
+    // Which Google account(s) may complete /google/auth (comma-separated emails and/or @domains,
+    // e.g. "you@example.com, @your-company.com").
+    // Fail closed: empty = NOBODY unless ALLOW_ANY_GOOGLE_ACCOUNT is "true".
+    "ALLOWED_EMAILS": "you@example.com",
+    "ALLOW_ANY_GOOGLE_ACCOUNT": "false",
+    // Optional: pre-select a Workspace domain on Google's account chooser (hd).
+    "GOOGLE_HOSTED_DOMAIN": "",
+    // Least privilege: comma-separated product groups to expose (empty = all); only their scopes are requested.
+    // Keys: sheets, drive, docs, gmail, calendar, tasks, contacts, chat, slides, forms, photos, youtube, meet.
+    // Profile shorthands are also accepted here: core, gmail, calendar, drive_docs, personal,
+    // sheets_power_user, company_admin. A GROUP name always wins over a profile of the same name.
+    "ENABLED_TOOL_GROUPS": "",
+    "DISABLED_TOOL_GROUPS": "",
+    // Which tools are ADVERTISED in tools/list: "full" (every enabled tool) or "compact" (a small
+    // recipe set; everything else stays callable by name). Pinned to "full" here on purpose:
+    // scripted and CLI clients drive this worker off the advertised list, so it must not shrink
+    // under them when the default flips in 1.5. Unset/blank/unrecognised = full.
+    "TOOL_SURFACE": "full",
+    // Comma/space-separated extra tool names to advertise on top of a compact surface. It changes
+    // nothing while TOOL_SURFACE is "full", but a name this deployment does not have is still
+    // reported in /health warnings there, so a typo shows up before you switch to compact.
+    "TOOL_SURFACE_ADD": "",
+    // Per-MCP-session tool-call budget (calls/minute; "0" = unlimited).
+    "TOOL_RATE_LIMIT_PER_MIN": "120",
+    // "true" registers only read tools (no writes/sends/deletes).
+    "MCP_READONLY": "false"
+  },
+  "observability": { "enabled": true },
+  // Source maps make Workers Logs stack traces point at src/*.ts instead of the bundle.
+  "upload_source_maps": true
+}

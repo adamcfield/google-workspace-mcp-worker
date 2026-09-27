@@ -1,0 +1,49 @@
+name: Smoke
+
+# Runs scripts/smoke.mjs against deployed workers from a GitHub runner (useful
+# when the caller's own network cannot reach *.workers.dev). Trigger manually:
+#   Actions → Smoke → Run workflow  (or via the API / MCP actions_run_trigger)
+# Inputs:
+#   oauth_url            https://google-workspace-mcp-oauth.<sub>.workers.dev   (unauthenticated + discovery checks)
+#   bearer_url           https://google-workspace-mcp.<sub>.workers.dev          (optional)
+#   e2e_spreadsheet_id   optional; with the MCP_AUTH_TOKEN repo secret set, runs the bearer --e2e checks
+# Secrets (optional, repo Settings → Secrets → Actions): MCP_AUTH_TOKEN — the bearer worker's token,
+# enables the authenticated bearer checks (tools/list, google_whoami) and --e2e. Never printed.
+on:
+  workflow_dispatch:
+    inputs:
+      oauth_url:
+        description: OAuth (claude.ai connector) worker origin
+        required: false
+        type: string
+      bearer_url:
+        description: Bearer worker origin
+        required: false
+        type: string
+      e2e_spreadsheet_id:
+        description: Spreadsheet id for the --e2e checks (bearer worker, needs MCP_AUTH_TOKEN secret)
+        required: false
+        type: string
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Smoke — OAuth connector worker
+        if: ${{ inputs.oauth_url != '' }}
+        run: node scripts/smoke.mjs "${{ inputs.oauth_url }}"
+      - name: Smoke — bearer worker
+        if: ${{ inputs.bearer_url != '' }}
+        env:
+          MCP_TOKEN: ${{ secrets.MCP_AUTH_TOKEN }}
+          E2E_SPREADSHEET_ID: ${{ inputs.e2e_spreadsheet_id }}
+        run: |
+          if [ -n "$MCP_TOKEN" ] && [ -n "$E2E_SPREADSHEET_ID" ]; then
+            node scripts/smoke.mjs "${{ inputs.bearer_url }}" --e2e
+          else
+            node scripts/smoke.mjs "${{ inputs.bearer_url }}"
+          fi

@@ -1,0 +1,32 @@
+{
+  "note": "Discovery regression set. Each case is a request in a user's own words and the tool a correct answer must surface. The five tools the 2026-09-21 manual QA acceptance had to re-query for are covered from several angles, in English and Hebrew, together with their same-group near siblings — the pairs where the first query landed on the wrong one. Ranks come from src/tools/_router.ts over the full catalog; tests/discovery.test.ts is the runner.",
+  "cases": [
+    { "query": "what's on my calendar this week", "required": "calendar_list_events" },
+    { "query": "list my calendar events for tomorrow", "required": "calendar_list_events", "qa": "acceptance step 4" },
+    { "query": "show me my meetings on friday", "required": "calendar_list_events" },
+    { "query": "מה יש לי ביומן מחר", "required": "calendar_list_events" },
+    { "query": "which calendars do I have access to", "required": "calendar_list_calendars", "sibling_of": "calendar_list_events" },
+
+    { "query": "make a new spreadsheet for the Q3 numbers", "required": "sheets_create_spreadsheet", "qa": "acceptance step 6" },
+    { "query": "create a spreadsheet", "required": "sheets_create_spreadsheet" },
+    { "query": "תפתח לי גיליון חדש", "required": "sheets_create_spreadsheet" },
+
+    { "query": "read the values in A1:D20 of that sheet", "required": "sheets_read_range", "qa": "acceptance step 6" },
+    { "query": "get the cells from the budget sheet", "required": "sheets_read_range" },
+    { "query": "what formula is in B7", "required": "sheets_read_cells", "sibling_of": "sheets_read_range" },
+    { "query": "write these totals into the sheet", "required": "sheets_write_range", "sibling_of": "sheets_read_range" },
+
+    { "query": "delete that file from my drive", "required": "drive_delete_file", "qa": "acceptance step 8" },
+    { "query": "remove the old report file", "required": "drive_delete_file" },
+    { "query": "תמחק את הקובץ הזה מהדרייב", "required": "drive_delete_file" },
+
+    { "query": "draft an email to dana about the invoice", "required": "gmail_create_draft", "qa": "acceptance step 7" },
+    { "query": "save a draft reply to that message", "required": "gmail_create_draft" },
+    { "query": "download the pdf attached to that email", "required": "gmail_download_attachment", "sibling_of": "gmail_create_draft" },
+
+    { "query": "find the invoice email from the supplier", "required": "gmail_search_messages", "qa": "acceptance step 3" },
+    { "query": "read that email", "required": "gmail_read_message", "qa": "acceptance step 3" },
+    { "query": "what files are in my drive about solar", "required": "drive_search_files", "qa": "acceptance step 5" },
+    { "query": "who am I signed in as", "required": "google_whoami", "qa": "acceptance step 2" }
+  ]
+}

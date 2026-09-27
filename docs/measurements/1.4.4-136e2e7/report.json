@@ -1,0 +1,376 @@
+{
+ "version": "1.4.4",
+ "commit": "136e2e7",
+ "generatedFrom": "src/tools/index.ts via an in-memory McpServer",
+ "instructionsChars": 1306,
+ "surfaces": {
+  "full": {
+   "tools": 163,
+   "wireBytes": 158135,
+   "modelFacingBytes": 134866,
+   "modelFacingBytesNoSchemaKey": 126390,
+   "descriptionChars": 43637,
+   "descriptionCharsMax": 828,
+   "inputSchemaBytes": 80537,
+   "annotationsBytes": 14457,
+   "p50WireBytes": 815,
+   "p95WireBytes": 1991,
+   "top10": [
+    {
+     "name": "calendar_update_event",
+     "wireBytes": 2810,
+     "modelFacingBytes": 2667,
+     "descriptionChars": 289,
+     "inputSchemaBytes": 2313
+    },
+    {
+     "name": "calendar_create_event",
+     "wireBytes": 2708,
+     "modelFacingBytes": 2564,
+     "descriptionChars": 315,
+     "inputSchemaBytes": 2184
+    },
+    {
+     "name": "forms_create",
+     "wireBytes": 2347,
+     "modelFacingBytes": 2203,
+     "descriptionChars": 347,
+     "inputSchemaBytes": 1800
+    },
+    {
+     "name": "photos_search_media_items",
+     "wireBytes": 2214,
+     "modelFacingBytes": 2072,
+     "descriptionChars": 617,
+     "inputSchemaBytes": 1384
+    },
+    {
+     "name": "sheets_batch_update",
+     "wireBytes": 2122,
+     "modelFacingBytes": 1979,
+     "descriptionChars": 821,
+     "inputSchemaBytes": 1091
+    },
+    {
+     "name": "contacts_update",
+     "wireBytes": 2116,
+     "modelFacingBytes": 1973,
+     "descriptionChars": 252,
+     "inputSchemaBytes": 1660
+    },
+    {
+     "name": "calendar_list_events",
+     "wireBytes": 2110,
+     "modelFacingBytes": 1968,
+     "descriptionChars": 337,
+     "inputSchemaBytes": 1567
+    },
+    {
+     "name": "google_api_request",
+     "wireBytes": 2025,
+     "modelFacingBytes": 1882,
+     "descriptionChars": 828,
+     "inputSchemaBytes": 988
+    },
+    {
+     "name": "drive_search_files",
+     "wireBytes": 1991,
+     "modelFacingBytes": 1849,
+     "descriptionChars": 822,
+     "inputSchemaBytes": 963
+    },
+    {
+     "name": "forms_add_questions",
+     "wireBytes": 1978,
+     "modelFacingBytes": 1834,
+     "descriptionChars": 207,
+     "inputSchemaBytes": 1564
+    }
+   ]
+  },
+  "profile:gmail+calendar+drive+docs+sheets": {
+   "tools": 79,
+   "wireBytes": 79496,
+   "modelFacingBytes": 68211,
+   "modelFacingBytesNoSchemaKey": 64103,
+   "descriptionChars": 21372,
+   "descriptionCharsMax": 828,
+   "inputSchemaBytes": 41733,
+   "annotationsBytes": 7009,
+   "p50WireBytes": 873,
+   "p95WireBytes": 2110,
+   "top10": [
+    {
+     "name": "calendar_update_event",
+     "wireBytes": 2810,
+     "modelFacingBytes": 2667,
+     "descriptionChars": 289,
+     "inputSchemaBytes": 2313
+    },
+    {
+     "name": "calendar_create_event",
+     "wireBytes": 2708,
+     "modelFacingBytes": 2564,
+     "descriptionChars": 315,
+     "inputSchemaBytes": 2184
+    },
+    {
+     "name": "sheets_batch_update",
+     "wireBytes": 2122,
+     "modelFacingBytes": 1979,
+     "descriptionChars": 821,
+     "inputSchemaBytes": 1091
+    },
+    {
+     "name": "calendar_list_events",
+     "wireBytes": 2110,
+     "modelFacingBytes": 1968,
+     "descriptionChars": 337,
+     "inputSchemaBytes": 1567
+    },
+    {
+     "name": "google_api_request",
+     "wireBytes": 2025,
+     "modelFacingBytes": 1882,
+     "descriptionChars": 828,
+     "inputSchemaBytes": 988
+    },
+    {
+     "name": "drive_search_files",
+     "wireBytes": 1991,
+     "modelFacingBytes": 1849,
+     "descriptionChars": 822,
+     "inputSchemaBytes": 963
+    },
+    {
+     "name": "gmail_read_message",
+     "wireBytes": 1627,
+     "modelFacingBytes": 1485,
+     "descriptionChars": 645,
+     "inputSchemaBytes": 776
+    },
+    {
+     "name": "gmail_get_attachment",
+     "wireBytes": 1600,
+     "modelFacingBytes": 1458,
+     "descriptionChars": 592,
+     "inputSchemaBytes": 798
+    },
+    {
+     "name": "docs_batch_update",
+     "wireBytes": 1533,
+     "modelFacingBytes": 1390,
+     "descriptionChars": 784,
+     "inputSchemaBytes": 541
+    },
+    {
+     "name": "drive_share_file",
+     "wireBytes": 1517,
+     "modelFacingBytes": 1374,
+     "descriptionChars": 349,
+     "inputSchemaBytes": 965
+    }
+   ]
+  },
+  "group:gmail": {
+   "tools": 23,
+   "wireBytes": 19870,
+   "modelFacingBytes": 16580,
+   "modelFacingBytesNoSchemaKey": 15384,
+   "descriptionChars": 6523,
+   "descriptionCharsMax": 828,
+   "inputSchemaBytes": 8582,
+   "annotationsBytes": 2038,
+   "p50WireBytes": 731,
+   "p95WireBytes": 1627,
+   "top10": [
+    {
+     "name": "google_api_request",
+     "wireBytes": 2025,
+     "modelFacingBytes": 1882,
+     "descriptionChars": 828,
+     "inputSchemaBytes": 988
+    },
+    {
+     "name": "gmail_read_message",
+     "wireBytes": 1627,
+     "modelFacingBytes": 1485,
+     "descriptionChars": 645,
+     "inputSchemaBytes": 776
+    },
+    {
+     "name": "gmail_get_attachment",
+     "wireBytes": 1600,
+     "modelFacingBytes": 1458,
+     "descriptionChars": 592,
+     "inputSchemaBytes": 798
+    },
+    {
+     "name": "gmail_update_draft",
+     "wireBytes": 1300,
+     "modelFacingBytes": 1157,
+     "descriptionChars": 398,
+     "inputSchemaBytes": 695
+    },
+    {
+     "name": "gmail_search_messages",
+     "wireBytes": 1256,
+     "modelFacingBytes": 1114,
+     "descriptionChars": 431,
+     "inputSchemaBytes": 616
+    },
+    {
+     "name": "gmail_create_draft",
+     "wireBytes": 1246,
+     "modelFacingBytes": 1102,
+     "descriptionChars": 357,
+     "inputSchemaBytes": 681
+    },
+    {
+     "name": "gmail_send_message",
+     "wireBytes": 1129,
+     "modelFacingBytes": 986,
+     "descriptionChars": 353,
+     "inputSchemaBytes": 571
+    },
+    {
+     "name": "google_whoami",
+     "wireBytes": 952,
+     "modelFacingBytes": 810,
+     "descriptionChars": 664,
+     "inputSchemaBytes": 85
+    },
+    {
+     "name": "gmail_create_label",
+     "wireBytes": 772,
+     "modelFacingBytes": 628,
+     "descriptionChars": 117,
+     "inputSchemaBytes": 449
+    },
+    {
+     "name": "gmail_get_thread",
+     "wireBytes": 747,
+     "modelFacingBytes": 605,
+     "descriptionChars": 189,
+     "inputSchemaBytes": 356
+    }
+   ]
+  },
+  "group:sheets": {
+   "tools": 20,
+   "wireBytes": 21356,
+   "modelFacingBytes": 18492,
+   "modelFacingBytesNoSchemaKey": 17452,
+   "descriptionChars": 5611,
+   "descriptionCharsMax": 828,
+   "inputSchemaBytes": 11593,
+   "annotationsBytes": 1774,
+   "p50WireBytes": 952,
+   "p95WireBytes": 2025,
+   "top10": [
+    {
+     "name": "sheets_batch_update",
+     "wireBytes": 2122,
+     "modelFacingBytes": 1979,
+     "descriptionChars": 821,
+     "inputSchemaBytes": 1091
+    },
+    {
+     "name": "google_api_request",
+     "wireBytes": 2025,
+     "modelFacingBytes": 1882,
+     "descriptionChars": 828,
+     "inputSchemaBytes": 988
+    },
+    {
+     "name": "sheets_get_cells",
+     "wireBytes": 1355,
+     "modelFacingBytes": 1213,
+     "descriptionChars": 408,
+     "inputSchemaBytes": 743
+    },
+    {
+     "name": "sheets_read_range",
+     "wireBytes": 1348,
+     "modelFacingBytes": 1206,
+     "descriptionChars": 367,
+     "inputSchemaBytes": 776
+    },
+    {
+     "name": "sheets_append_rows",
+     "wireBytes": 1346,
+     "modelFacingBytes": 1202,
+     "descriptionChars": 169,
+     "inputSchemaBytes": 969
+    },
+    {
+     "name": "sheets_write_range",
+     "wireBytes": 1315,
+     "modelFacingBytes": 1172,
+     "descriptionChars": 181,
+     "inputSchemaBytes": 929
+    },
+    {
+     "name": "sheets_batch_write",
+     "wireBytes": 1176,
+     "modelFacingBytes": 1033,
+     "descriptionChars": 54,
+     "inputSchemaBytes": 917
+    },
+    {
+     "name": "sheets_trace_precedents",
+     "wireBytes": 1118,
+     "modelFacingBytes": 976,
+     "descriptionChars": 317,
+     "inputSchemaBytes": 592
+    },
+    {
+     "name": "sheets_create_spreadsheet",
+     "wireBytes": 1116,
+     "modelFacingBytes": 972,
+     "descriptionChars": 130,
+     "inputSchemaBytes": 773
+    },
+    {
+     "name": "sheets_audit",
+     "wireBytes": 1113,
+     "modelFacingBytes": 971,
+     "descriptionChars": 486,
+     "inputSchemaBytes": 427
+    }
+   ]
+  }
+ },
+ "tokens": {
+  "tokenizer": {
+   "name": "@anthropic-ai/tokenizer",
+   "version": "0.0.4"
+  },
+  "surfaces": {
+   "full": {
+    "tools": 163,
+    "asEmitted": 34473,
+    "stripped": 31672,
+    "perTool": 194
+   },
+   "profile:gmail+calendar+drive+docs+sheets": {
+    "tools": 79,
+    "asEmitted": 17509,
+    "stripped": 16152,
+    "perTool": 204
+   },
+   "group:gmail": {
+    "tools": 23,
+    "asEmitted": 4242,
+    "stripped": 3845,
+    "perTool": 167
+   },
+   "group:sheets": {
+    "tools": 20,
+    "asEmitted": 4662,
+    "stripped": 4320,
+    "perTool": 216
+   }
+  }
+ }
+}

@@ -1,0 +1,67 @@
+name: Deploy
+
+# Deploys BOTH workers with wrangler on every push to main (and on demand).
+#
+# The committed wrangler.jsonc / wrangler.oauth.jsonc are templates: this repository is
+# public, so they carry REPLACE_WITH_YOUR_* placeholders and an example allow-list instead
+# of one deployment's KV namespace ids and addresses. scripts/deploy-config.mjs fills them
+# from the repository variables below and writes a gitignored config to deploy from. It
+# fails the job rather than deploying a config that still holds a placeholder.
+#
+# Repo SECRETS (Settings → Secrets and variables → Actions → Secrets):
+#   CLOUDFLARE_API_TOKEN   token with the "Edit Cloudflare Workers" template
+#                          (+ Workers KV Storage: Edit)
+#   CLOUDFLARE_ACCOUNT_ID  from the Cloudflare dashboard sidebar
+# Repo VARIABLES (same page → Variables) — not secrets; a KV namespace id is an identifier,
+# not a credential, and keeping them as variables makes a wrong one visible in the log:
+#   TOKEN_KV_ID            id of the bearer worker's TOKEN_KV namespace
+#   OAUTH_KV_ID            id of the connector's OAUTH_KV namespace
+#   ALLOWED_EMAILS         allow-list for both workers (comma-separated emails and/or
+#                          @domains). Optional: the template value stands if unset, which
+#                          fails closed — it permits nobody real.
+#
+# Worker secrets (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / MCP_AUTH_TOKEN) persist across
+# deploys and are never touched here. Set the repo variable DEPLOY_ENABLED=false to pause.
+#
+# A push to a clone that has not set TOKEN_KV_ID yet skips the job instead of failing it:
+# a fresh copy of this repository has nothing to deploy to. A manual run still fails loudly
+# on a missing value, which is the case worth hearing about.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: ${{ vars.DEPLOY_ENABLED != 'false' && (github.event_name == 'workflow_dispatch' || vars.TOKEN_KV_ID != '') }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - name: Fill the Wrangler templates with this deployment's values
+        run: |
+          set -euo pipefail
+          node scripts/deploy-config.mjs wrangler.oauth.jsonc --out wrangler.oauth.deploy.jsonc
+          node scripts/deploy-config.mjs wrangler.jsonc --out wrangler.deploy.jsonc
+          # Print what was filled in, never the file: the allow-list is personal data.
+          jq -r '.kv_namespaces[] | "\(.binding) -> \(.id)"' wrangler.oauth.deploy.jsonc wrangler.deploy.jsonc
+        env:
+          TOKEN_KV_ID: ${{ vars.TOKEN_KV_ID }}
+          OAUTH_KV_ID: ${{ vars.OAUTH_KV_ID }}
+          ALLOWED_EMAILS: ${{ vars.ALLOWED_EMAILS }}
+      - name: Deploy OAuth worker (claude.ai connector)
+        run: npx wrangler deploy -c wrangler.oauth.deploy.jsonc
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          WRANGLER_SEND_METRICS: 'false'
+      - name: Deploy bearer worker
+        run: npx wrangler deploy -c wrangler.deploy.jsonc
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          WRANGLER_SEND_METRICS: 'false'

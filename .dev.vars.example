@@ -1,0 +1,21 @@
+# Copy to .dev.vars for `npm run dev` / `npm run dev:oauth` (never commit .dev.vars).
+GOOGLE_CLIENT_ID=xxxxxxxx.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=GOCSPX-xxxxxxxx
+# Bearer worker only (npm run dev): the shared secret MCP clients send (openssl rand -hex 32)
+MCP_AUTH_TOKEN=change-me-to-32-plus-random-characters
+# Who may sign in: comma-separated emails / @domains. Empty = NOBODY unless ALLOW_ANY_GOOGLE_ACCOUNT=true.
+ALLOWED_EMAILS=you@example.com
+ALLOW_ANY_GOOGLE_ACCOUNT=false
+# Optional Workspace domain pre-selected on Google's account chooser
+GOOGLE_HOSTED_DOMAIN=
+# Optional least-privilege tool surface (see README → Configuration). Group keys, or a profile
+# shorthand: core, gmail, calendar, drive_docs, personal, sheets_power_user, company_admin.
+# A group name always wins over a profile of the same name.
+ENABLED_TOOL_GROUPS=
+DISABLED_TOOL_GROUPS=
+# Which tools tools/list advertises: full (default, unset = today's behaviour) or compact.
+# Hidden tools stay registered and callable by name; TOOL_SURFACE_ADD adds names to a compact surface.
+TOOL_SURFACE=
+TOOL_SURFACE_ADD=
+TOOL_RATE_LIMIT_PER_MIN=120
+MCP_READONLY=false

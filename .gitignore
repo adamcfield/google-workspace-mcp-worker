@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+
+# Wrangler local state & secrets
+.wrangler/
+.dev.vars
+.dev.vars.*
+worker-configuration.d.ts
+
+# Build output
+dist/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Benchmark: sandbox ids, local transcripts and run outputs (contain account data) — never committed
+bench/fixtures.local.json
+bench/runs/
+# Live tool-selection runs: written by `npm run jev:live`, published as a workflow artifact and
+# reviewed there. The committed report under bench/jev/results/ is the deterministic baseline, which
+# any checkout can reproduce; a live run's output is a measurement of one moment and is not a
+# baseline, so it stays out of the tree rather than drifting in it.
+bench/jev/results/live/
+out/
+measurements/
+
+# OS / editor cruft
+.DS_Store
+.mcp-token.local
+
+# keep the example vars file
+!.dev.vars.example
+
+# Generated staging configs (scripts/staging-config.mjs)
+wrangler.staging-*.jsonc
+
+# Generated deploy configs (scripts/deploy-config.mjs) — hold this deployment's own ids and allow-list
+wrangler.deploy.jsonc
+wrangler.*.deploy.jsonc

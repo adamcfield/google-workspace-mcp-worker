@@ -1,0 +1,458 @@
+name: QA
+
+# Deploys the dedicated Claude-chat QA copy of the connector: google-workspace-mcp-oauth-qa.
+# Same code as production, its own worker name (so its own Durable Object namespace), its own
+# OAUTH_KV namespace (created through the Cloudflare API when missing — never the production id)
+# and its own rate-limit namespace id. Manual only.
+#
+# Why this is not the Staging workflow with another suffix:
+#
+#   * The suffix is FIXED at `qa`. Staging takes a list, so a mistyped dispatch there can reach
+#     the v1.5 workstream's a/b/c copies. This workflow cannot name them at all.
+#   * Staging's final gate requires the deployed worker's version and tool count to EQUAL
+#     production's. That is a parity check, and parity is the opposite of what a QA environment
+#     is for: the whole point is to run a build that production does not have yet. This workflow
+#     asserts the worker is up, is the connector, and is configured, then REPORTS its version and
+#     tool count as evidence rather than failing on a difference.
+#
+# Supply chain. The dispatcher chooses which commit this deploys, so the commit is constrained,
+# and the code it selects never executes in the same job as a credential:
+#
+#   * `ref` must be a 40-character lowercase commit SHA — no branch or tag names, nothing mutable,
+#     so there is no window between the check and the checkout.
+#   * That commit must be contained in `main` or a `release/*` branch, i.e. code that already went
+#     through review. An arbitrary work branch's tip is not.
+#   * `verify` holds NO credential of any kind. It is the only job that installs or builds the
+#     selected commit: it checks it out, runs `npm ci`, the typecheck, the tests, and the bundle —
+#     and it publishes the built Worker, its config and a SHA-256 manifest as an artifact.
+#   * `deploy` checks out no code at all: not the selected commit, and not the branch the workflow
+#     was dispatched on. It downloads that artifact, verifies every digest, installs nothing but
+#     the one pinned Wrangler version that built it (`--ignore-scripts`, no project dependencies),
+#     and publishes the prebuilt bundle with `--no-bundle`: no install and no build step runs while
+#     a credential is in scope. Each secret is mapped onto the single step that needs it, never
+#     onto the job.
+#   * `smoke` runs after the deploy and checks the live worker with the deployed commit's OWN
+#     `scripts/smoke.mjs`, so the checks that ship with a commit are the ones run against it. It
+#     checks out exactly the SHA `verify` resolved (checkout credentials not persisted), proves
+#     HEAD is that SHA, installs nothing (the script imports only Node built-ins), references no
+#     repository secret and gets a read-only token. Like `verify`, it runs the selected commit's
+#     code with nothing credentialed in scope.
+#
+# JEV. This workflow turns the model-backed selection path ON for the QA worker and nowhere else:
+# `JEV_ENABLED="true"` is written into the generated QA config by the credential-free job, so it is
+# inside the reviewed artifact, and `TYPESAFE_API_KEY` is installed as a WORKER secret by one step
+# that holds it and nothing else. The committed Wrangler templates carry neither, so production and
+# the a/b/c copies cannot inherit them. The run fails if the deployed worker does not report both
+# `jevEnabled` and `jevConfigured`.
+#
+# Repo SECRETS: CLOUDFLARE_API_TOKEN (Workers + KV edit), CLOUDFLARE_ACCOUNT_ID, TYPESAFE_API_KEY
+# (the QA worker's TypeSafe key — the QA deployment refuses to run without it). Optional
+# GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET are set on the worker after the deploy; without them the
+# worker keeps whatever secrets it already has.
+# Repo VARIABLES: ALLOWED_EMAILS (the real allow-list — the committed config is a public template
+# holding a placeholder, so a worker generated without this would refuse every sign-in),
+# WORKERS_SUBDOMAIN (the `<sub>` in https://<worker>.<sub>.workers.dev, so no live URL is
+# committed here) and OAUTH_KV_ID (production's namespace, passed in only so it can be refused).
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Exact 40-character commit SHA to deploy (required — no default, no branch or tag names)'
+        required: true
+        type: string
+      extra_allowed_emails:
+        description: 'Extra allow-list entries for the QA worker only, appended to the repo variable ALLOWED_EMAILS. Production and a/b/c are never affected.'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+env:
+  SUFFIX: qa
+  PLACEHOLDER_KV: '00000000000000000000000000000000'
+
+jobs:
+  # No secret is referenced anywhere in this job. It is the only one that installs or builds the
+  # dispatcher's code (`smoke` runs one script from the same commit, equally credential-free).
+  verify:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+      wrangler: ${{ steps.build.outputs.wrangler }}
+      digest: ${{ steps.build.outputs.digest }}
+      worker: ${{ steps.build.outputs.worker }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Require the allow-list this deployment actually uses
+        env:
+          ALLOWED_EMAILS: ${{ vars.ALLOWED_EMAILS }}
+        run: |
+          if [ -z "${ALLOWED_EMAILS// /}" ]; then
+            echo "::error::Set the repo variable ALLOWED_EMAILS to this deployment's real allow-list. The committed config is a public template holding you@example.com, so a QA worker generated without this would refuse every sign-in."
+            exit 1
+          fi
+
+      - name: Resolve the input to an immutable, reviewed commit
+        id: resolve
+        env:
+          REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          # Immutable: a 40-hex commit id and nothing else. A branch or tag can be moved between
+          # the moment it is checked and the moment it is checked out.
+          if [ "${#REF}" -ne 40 ] || [ -n "$(printf '%s' "$REF" | tr -d '0-9a-f')" ]; then
+            echo "::error::ref must be a 40-character lowercase commit SHA; branch and tag names are not accepted."
+            exit 1
+          fi
+          git fetch --no-tags --prune origin '+refs/heads/*:refs/remotes/origin/*'
+          git cat-file -e "$REF^{commit}" 2>/dev/null || {
+            echo "::error::$REF is not a commit in this repository."; exit 1; }
+          # Reviewed: contained in a branch that only takes merged pull requests. The tip of an
+          # arbitrary work branch is not, so this workflow cannot be used to run unreviewed code.
+          reviewed=""
+          for b in $(git for-each-ref --format='%(refname)' refs/remotes/origin/main 'refs/remotes/origin/release/*'); do
+            if git merge-base --is-ancestor "$REF" "$b"; then reviewed="${b#refs/remotes/}"; break; fi
+          done
+          if [ -z "$reviewed" ]; then
+            echo "::error::$REF is not contained in main or any release/* branch, so it is not reviewed code."
+            exit 1
+          fi
+          echo "$REF is contained in $reviewed"
+          echo "sha=$REF" >> "$GITHUB_OUTPUT"
+          # The deployed commit may predate this generator, so keep the reviewed copy from the
+          # branch the workflow itself was dispatched on and run that one.
+          cp scripts/staging-config.mjs "$RUNNER_TEMP/staging-config.mjs"
+
+      - name: Check out that commit
+        env:
+          SHA: ${{ steps.resolve.outputs.sha }}
+        run: |
+          set -euo pipefail
+          git checkout --detach "$SHA"
+          [ "$(git rev-parse HEAD)" = "$SHA" ] || { echo "::error::checkout did not land on $SHA"; exit 1; }
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+      - name: Build the deployable Worker, with no credentials in scope
+        id: build
+        env:
+          SHA: ${{ steps.resolve.outputs.sha }}
+          ALLOWED_EMAILS: ${{ vars.ALLOWED_EMAILS }}
+          EXTRA_ALLOWED_EMAILS: ${{ inputs.extra_allowed_emails }}
+          PROD_KV_ID: ${{ vars.OAUTH_KV_ID }}
+        run: |
+          set -euo pipefail
+          name="google-workspace-mcp-oauth-$SUFFIX"
+          art="$RUNNER_TEMP/artifact"
+          mkdir -p "$art/dist"
+          # The real KV id needs the Cloudflare API, which needs a token, which is the thing this
+          # job must not hold. So build against a placeholder and let the deploy job prove that the
+          # only thing it changed is that id.
+          cfg="$(node "$RUNNER_TEMP/staging-config.mjs" "$SUFFIX" "$PLACEHOLDER_KV" \
+            --source "$GITHUB_WORKSPACE/wrangler.oauth.jsonc" \
+            --out "$GITHUB_WORKSPACE/wrangler.staging-$SUFFIX.jsonc" \
+            --allow-base "$ALLOWED_EMAILS" \
+            --allow-extra "$EXTRA_ALLOWED_EMAILS" \
+            --refuse-kv-id "$PROD_KV_ID")"
+          got="$(jq -r .name "$cfg")"
+          [ "$got" = "$name" ] || { echo "::error::generated config is for $got, expected $name"; exit 1; }
+          # JEV on, HERE — in the job that holds no credential and before the artifact is built, so
+          # the flag is part of what the digest covers rather than something the credentialed job
+          # adds afterwards. It is written into the generated QA config only: the committed
+          # templates never carry it, so production and the a/b/c copies cannot pick it up.
+          jq '.vars.JEV_ENABLED = "true"' "$cfg" > "$cfg.jev" && mv "$cfg.jev" "$cfg"
+          [ "$(jq -r '.vars.JEV_ENABLED' "$cfg")" = "true" ] || { echo "::error::JEV_ENABLED did not reach the QA config"; exit 1; }
+          [ "$(jq -r .name "$cfg")" = "$name" ] || { echo "::error::config name changed while setting JEV_ENABLED"; exit 1; }
+          echo "$name allow-list: $(jq -r '.vars.ALLOWED_EMAILS | split(", ") | length' "$cfg") entries, JEV_ENABLED=true"
+
+          # This is the build. Everything after it in this workflow only moves bytes around.
+          npx wrangler deploy --dry-run --outdir "$art/dist" -c "$cfg"
+          entries="$(find "$art/dist" -maxdepth 1 -name '*.js' -printf '%f\n')"
+          [ "$(echo "$entries" | wc -l)" -eq 1 ] || {
+            echo "::error::expected exactly one entry module in the bundle, got: $entries"; exit 1; }
+          # The config that will be published: identical to the reviewed one except that `main`
+          # now points at the built bundle instead of at TypeScript source.
+          jq --arg m "dist/$entries" '.main = $m' "$cfg" > "$art/wrangler.qa.json"
+
+          wrangler_version="$(npx wrangler --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)"
+          jq -n --arg sha "$SHA" --arg w "$name" --arg v "$wrangler_version" \
+                --arg run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+                --arg repo "$GITHUB_REPOSITORY" --arg kv "$PLACEHOLDER_KV" \
+            '{source_sha:$sha, worker:$w, wrangler:$v, built_by:$run, repository:$repo, kv_placeholder:$kv}' \
+            > "$art/provenance.json"
+
+          cd "$art"
+          find . -type f ! -name MANIFEST.sha256 -print0 | sort -z | xargs -0 sha256sum > MANIFEST.sha256
+          digest="$(sha256sum MANIFEST.sha256 | cut -d' ' -f1)"
+          cat MANIFEST.sha256
+          echo "manifest digest: $digest"
+          echo "wrangler=$wrangler_version" >> "$GITHUB_OUTPUT"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "worker=$name" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Reviewed QA artifact"
+            echo
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Source SHA | \`$SHA\` |"
+            echo "| Worker | \`$name\` |"
+            echo "| Wrangler | \`$wrangler_version\` |"
+            echo "| Manifest digest | \`$digest\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qa-worker-artifact
+          path: ${{ runner.temp }}/artifact/
+          if-no-files-found: error
+
+  # Publishes what `verify` built. It checks out no code at all — neither the selected commit nor
+  # the dispatching branch — never installs the project's dependencies and never bundles: there is
+  # no build behaviour here to hijack. The post-deploy checks live in `smoke`, below.
+  deploy:
+    needs: verify
+    runs-on: ubuntu-latest
+    env:
+      WRANGLER_SEND_METRICS: 'false'
+      SHA: ${{ needs.verify.outputs.sha }}
+      WORKER: ${{ needs.verify.outputs.worker }}
+    steps:
+      # `runner.temp` is not a context a job-level `env:` can read, so the artifact directory is
+      # named once here instead.
+      - name: Name the artifact directory
+        run: echo "ART=$RUNNER_TEMP/artifact" >> "$GITHUB_ENV"
+
+      # Node for the pinned Wrangler install below. Nothing is checked out: this job runs no code
+      # from the repository, so it fetches none.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: qa-worker-artifact
+          path: ${{ runner.temp }}/artifact
+
+      - name: Verify the artifact's digests and provenance
+        env:
+          EXPECTED_DIGEST: ${{ needs.verify.outputs.digest }}
+          PROD_KV_ID: ${{ vars.OAUTH_KV_ID }}
+        run: |
+          set -euo pipefail
+          cd "$ART"
+          got="$(sha256sum MANIFEST.sha256 | cut -d' ' -f1)"
+          [ "$got" = "$EXPECTED_DIGEST" ] || {
+            echo "::error::manifest digest $got does not match the one verify published"; exit 1; }
+          sha256sum -c --strict --quiet MANIFEST.sha256
+          [ "$(jq -r .source_sha provenance.json)" = "$SHA" ] || {
+            echo "::error::artifact was not built from $SHA"; exit 1; }
+          [ "$(jq -r .worker provenance.json)" = "$WORKER" ] || {
+            echo "::error::artifact is not for $WORKER"; exit 1; }
+          # The config may only target the QA worker, and must still carry the placeholder KV id —
+          # i.e. nothing has bound it to a real namespace yet.
+          [ "$(jq -r .name wrangler.qa.json)" = "$WORKER" ] || {
+            echo "::error::artifact config targets $(jq -r .name wrangler.qa.json), not $WORKER"; exit 1; }
+          [ "$(jq -r '.kv_namespaces[].id' wrangler.qa.json)" = "$PLACEHOLDER_KV" ] || {
+            echo "::error::artifact config is already bound to a namespace"; exit 1; }
+          [ -f "$(jq -r .main wrangler.qa.json)" ] || {
+            echo "::error::artifact config does not point at a built module"; exit 1; }
+          echo "artifact verified: $(wc -l < MANIFEST.sha256) files, digest $got, built from $SHA"
+
+      - name: Install only the Wrangler that built it
+        env:
+          WRANGLER_VERSION: ${{ needs.verify.outputs.wrangler }}
+        run: |
+          set -euo pipefail
+          # No project dependency and no lifecycle script: this installs the one pinned release of
+          # the publishing tool, nothing from the commit being deployed.
+          mkdir -p "$RUNNER_TEMP/wrangler"
+          cd "$RUNNER_TEMP/wrangler"
+          npm i --no-save --ignore-scripts --no-audit --no-fund "wrangler@$WRANGLER_VERSION"
+          echo "WRANGLER=$RUNNER_TEMP/wrangler/node_modules/.bin/wrangler" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/wrangler/node_modules/.bin/wrangler" --version
+
+      - name: Find or create the QA KV namespace
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/storage/kv/namespaces"
+          auth="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+          title="$WORKER-OAUTH_KV"
+          kv="$(curl -sS -H "$auth" "$api?per_page=100" | jq -r --arg t "$title" '.result[] | select(.title==$t) | .id' | head -n1)"
+          if [ -z "$kv" ]; then
+            echo "creating KV namespace $title"
+            kv="$(curl -sS -X POST -H "$auth" -H 'Content-Type: application/json' -d "{\"title\":\"$title\"}" "$api" | jq -r '.result.id')"
+          fi
+          [ "${#kv}" -eq 32 ] || { echo "::error::no KV namespace id for $title"; exit 1; }
+          echo "QA_KV_ID=$kv" >> "$GITHUB_ENV"
+
+      - name: Bind the reviewed config to that namespace, and nothing else
+        env:
+          PROD_KV_ID: ${{ vars.OAUTH_KV_ID }}
+        run: |
+          set -euo pipefail
+          cd "$ART"
+          if [ -n "${PROD_KV_ID:-}" ] && [ "$QA_KV_ID" = "$PROD_KV_ID" ]; then
+            echo "::error::refusing to bind $WORKER to the production OAUTH_KV namespace"
+            exit 1
+          fi
+          jq --arg kv "$QA_KV_ID" '(.kv_namespaces[].id) = $kv' wrangler.qa.json > wrangler.qa.deploy.json
+          # Setting the namespace id is the ONLY change the credentialed job is allowed to make to
+          # what was reviewed. Anything else and this deploys nothing.
+          norm() { jq -S --arg k "$PLACEHOLDER_KV" '(.kv_namespaces[].id) = $k' "$1"; }
+          if ! diff <(norm wrangler.qa.json) <(norm wrangler.qa.deploy.json); then
+            echo "::error::the deploy config differs from the reviewed one by more than the KV id"
+            exit 1
+          fi
+          echo "$WORKER bound to KV $QA_KV_ID"
+
+      - name: Publish the reviewed artifact
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        # --no-bundle: upload the module verify built, byte for byte. No esbuild, no npm, no
+        # source — the only thing this step can publish is what was reviewed.
+        run: |
+          "$WRANGLER" deploy --no-bundle -c "$ART/wrangler.qa.deploy.json"
+
+      - name: Set the worker's Google credentials
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -n "$GOOGLE_CLIENT_ID" ] && [ -n "$GOOGLE_CLIENT_SECRET" ]; then
+            printf '%s' "$GOOGLE_CLIENT_ID" | "$WRANGLER" secret put GOOGLE_CLIENT_ID -c "$ART/wrangler.qa.deploy.json"
+            printf '%s' "$GOOGLE_CLIENT_SECRET" | "$WRANGLER" secret put GOOGLE_CLIENT_SECRET -c "$ART/wrangler.qa.deploy.json"
+          else
+            echo "::notice::GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET repo secrets not set — $WORKER keeps whatever worker secrets it already has"
+          fi
+
+      - name: Install the QA worker's TypeSafe key
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+        # The only step that sees the key. It is piped to wrangler on stdin, never placed on a
+        # command line, never echoed, and never written to an output, an artifact or the manifest —
+        # the credential-free job that builds those has no access to it at all. A Worker secret
+        # survives redeploys, so this is a no-op on every run after the first.
+        run: |
+          set -euo pipefail
+          if [ -z "$TYPESAFE_API_KEY" ]; then
+            echo "::error::The TYPESAFE_API_KEY repository secret is empty or not set, so the QA worker would run with JEV_ENABLED=true and no key: every selection would be the deterministic one while the deployment looked like it was doing more. Set it under Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          printf '%s' "$TYPESAFE_API_KEY" | "$WRANGLER" secret put TYPESAFE_API_KEY -c "$ART/wrangler.qa.deploy.json"
+          echo "TYPESAFE_API_KEY installed on $WORKER"
+
+      - name: Health of the QA worker
+        env:
+          WORKERS_SUBDOMAIN: ${{ vars.WORKERS_SUBDOMAIN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${WORKERS_SUBDOMAIN:-}" ]; then
+            echo "::error::Set the repo variable WORKERS_SUBDOMAIN to your workers.dev subdomain."
+            exit 1
+          fi
+          url="https://$WORKER.$WORKERS_SUBDOMAIN.workers.dev/health"
+          for i in 1 2 3 4 5 6; do
+            code="$(curl -sS -o /tmp/qa-health.json -w '%{http_code}' "$url" || echo 000)"
+            [ "$code" = "200" ] && break
+            sleep 10
+          done
+          body="$(cat /tmp/qa-health.json)"
+          v="$(echo "$body" | jq -r .version)"
+          t="$(echo "$body" | jq -r .tools)"
+          m="$(echo "$body" | jq -r .mode)"
+          c="$(echo "$body" | jq -r .configured)"
+          w="$(echo "$body" | jq -c '.warnings // []')"
+          # Readiness for the JEV path: whether the flag is on, and whether a key is present. Both
+          # are booleans ABOUT the key, never anything from it — /health carries no part of it.
+          je="$(echo "$body" | jq -r '.jevEnabled // false')"
+          jc="$(echo "$body" | jq -r '.jevConfigured // false')"
+          echo "QA /health → $code  version=$v  tools=$t  mode=$m  configured=$c  jevEnabled=$je  jevConfigured=$jc  warnings=$w"
+          echo "deployed source SHA: $SHA"
+          # No parity check against production: a QA build is expected to differ. What must hold is
+          # that the worker is up, is the connector, and can actually let its allow-list sign in.
+          [ "$code" = "200" ] || { echo "::error::QA /health returned $code"; exit 1; }
+          [ "$m" = "oauth" ] || { echo "::error::QA worker reports mode=$m, expected oauth"; exit 1; }
+          [ "$c" = "true" ] || { echo "::error::QA worker is not configured"; exit 1; }
+          # This workflow sets the flag itself, so anything but true means the config it deployed
+          # is not the config it built.
+          [ "$je" = "true" ] || { echo "::error::QA worker reports jevEnabled=$je: JEV_ENABLED did not reach the deployed worker"; exit 1; }
+          # And a flag with no key is the state worth failing on: selection answers every request
+          # deterministically while the deployment looks like it is doing more.
+          [ "$jc" = "true" ] || { echo "::error::QA worker reports jevConfigured=false: the TYPESAFE_API_KEY secret did not reach it"; exit 1; }
+          {
+            echo "### QA deployment"
+            echo
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Worker | \`$WORKER\` |"
+            echo "| Source SHA | \`$SHA\` |"
+            echo "| Artifact digest | \`${{ needs.verify.outputs.digest }}\` |"
+            echo "| Version | \`$v\` |"
+            echo "| Tools | \`$t\` |"
+            echo "| Mode | \`$m\` |"
+            echo "| Configured | \`$c\` |"
+            echo "| JEV enabled | \`$je\` |"
+            echo "| JEV configured | \`$jc\` |"
+            echo "| Warnings | \`$w\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # The deployed commit's own connector checks, against the live QA worker. These used to be the
+  # last step of `deploy`, which ran scripts/smoke.mjs from a checkout of the branch the workflow
+  # was dispatched on — so a QA run of a release/* commit ran main's checks, and any check that
+  # shipped with the deployed commit never ran at all. Here the script comes from exactly the
+  # commit that was deployed, and nothing credentialed is in scope: no repository secret is
+  # referenced anywhere in this job, its token is read-only and is not persisted into the checkout.
+  smoke:
+    needs: [verify, deploy]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      SHA: ${{ needs.verify.outputs.sha }}
+      WORKER: ${{ needs.verify.outputs.worker }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          persist-credentials: false
+
+      - name: Prove the checkout is the deployed commit
+        run: |
+          set -euo pipefail
+          got="$(git rev-parse HEAD)"
+          [ "$got" = "$SHA" ] || { echo "::error::checked out $got, but the deployed commit is $SHA"; exit 1; }
+          echo "connector checks come from the deployed commit $SHA"
+
+      # No `npm ci`: scripts/smoke.mjs imports nothing but Node built-ins.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: Claude-chat connector path
+        env:
+          WORKERS_SUBDOMAIN: ${{ vars.WORKERS_SUBDOMAIN }}
+        # The same checks a claude.ai connector makes when it connects: the 401 that advertises
+        # resource_metadata (RFC 9728), the authorization-server metadata with PKCE S256, the
+        # protected-resource metadata, dynamic client registration and the consent page — plus
+        # whatever checks the deployed commit's own script adds.
+        run: node scripts/smoke.mjs "https://$WORKER.$WORKERS_SUBDOMAIN.workers.dev"

@@ -1,0 +1,4 @@
+# Byte-exact files (hash-pinned baselines, generated docs checked in CI) must not be CRLF-rewritten on checkout.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
